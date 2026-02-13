@@ -17,8 +17,9 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID", "0"))
 TZ_NAME = os.getenv("TZ", "Asia/Novosibirsk").strip()
 
-import pytz
-TZ = pytz.timezone(TZ_NAME)
+from zoneinfo import ZoneInfo
+TZ = ZoneInfo(TZ_NAME)
+
 
 
 # 2 февраля 2026 — старт 1-й недели
@@ -206,4 +207,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
