@@ -29,19 +29,20 @@ WEEK_START = date(2026, 2, 2)
 
 DAYS_RU = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
 
-# Уведомления, чтобы не спамить
-_lastpair_notified_for: date | None = None
+# Чтобы не спамить уведомлениями (по одному разу в день на каждый тип)
 _oneleft_notified_for: date | None = None
+_lastpair_notified_for: date | None = None
 
 # Кнопки
-BTN_TODAY = "Сегодня"
-BTN_TOMORROW = "Завтра"
-BTN_DATE = "Написать дату"
+BTN_TODAY = "📅 Сегодня"
+BTN_TOMORROW = "📅 Завтра"
+BTN_DATE = "📝 Написать дату"
+BTN_WEEK = "🗓️ Неделя"
 
 MAIN_KB = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(BTN_TODAY), KeyboardButton(BTN_TOMORROW)],
-        [KeyboardButton(BTN_DATE)],
+        [KeyboardButton(BTN_DATE), KeyboardButton(BTN_WEEK)],
     ],
     resize_keyboard=True,
     one_time_keyboard=False,
@@ -177,21 +178,39 @@ def parse_date_from_text(text: str, now: datetime) -> Optional[date]:
     return None
 
 
+def format_week(now: datetime, start: date, days: int = 7) -> str:
+    lines = ["🗓️ Расписание на 7 дней:"]
+    for i in range(days):
+        d = start + timedelta(days=i)
+        day_name = DAYS_RU[d.weekday()]
+        wt = week_type(d)
+        lessons = get_lessons_for_date(d)
+
+        if not lessons:
+            lines.append(f"\n📅 {day_name} ({d.strftime('%d.%m')}) — {wt}-я неделя\n🏖️ Пар нет")
+            continue
+
+        lines.append(f"\n📅 {day_name} ({d.strftime('%d.%m')}) — {wt}-я неделя\n📚 Пар: {len(lessons)}")
+        for idx, les in enumerate(lessons, start=1):
+            lines.append(f"{idx}) {les.start.strftime('%H:%M')}–{les.end.strftime('%H:%M')} — {les.title}")
+
+    return "\n".join(lines)
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_allowed(update):
         return
+    context.user_data["awaiting_date"] = False
     await update.message.reply_text(
         "Привет! 👋\n"
-        "Я помощник по расписанию.\n\n"
         "Нажимай кнопки:\n"
         f"• {BTN_TODAY}\n"
         f"• {BTN_TOMORROW}\n"
-        f"• {BTN_DATE} (например: 23 февраля или 23.02)\n\n"
-        "Я считаю по времени: " + TZ_NAME + "\n"
-        "И пришлю уведомления: когда останется 1 пара и когда начнётся последняя пара.",
+        f"• {BTN_DATE} (например: 23 февраля или 23.02)\n"
+        f"• {BTN_WEEK} (расписание на 7 дней)\n\n"
+        "Время: " + TZ_NAME,
         reply_markup=MAIN_KB,
     )
-    context.user_data["awaiting_date"] = False
 
 
 async def show_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -216,6 +235,11 @@ async def ask_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def show_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    now = datetime.now(TZ)
+    await update.message.reply_text(format_week(now, now.date(), days=7), reply_markup=MAIN_KB)
+
+
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_allowed(update):
         return
@@ -235,35 +259,34 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if txt == BTN_DATE:
         return await ask_date(update, context)
 
-    # Если пользователь ждет ввод даты — или просто написал дату
+    if txt == BTN_WEEK:
+        context.user_data["awaiting_date"] = False
+        return await show_week(update, context)
+
+    # Дата текстом
     d = parse_date_from_text(txt, now)
     if d:
         context.user_data["awaiting_date"] = False
         await update.message.reply_text(format_answer(now, d), reply_markup=MAIN_KB)
         return
 
-    # Фразы (на всякий случай, если пишет текстом)
-    t = normalize_text(txt)
-    if any(x in t for x in ["сегодня", "на сегодня", "сколько сегодня", "пары сегодня", "расписание сегодня"]):
-        context.user_data["awaiting_date"] = False
-        return await show_today(update, context)
-
-    if any(x in t for x in ["завтра", "на завтра"]):
-        context.user_data["awaiting_date"] = False
-        return await show_tomorrow(update, context)
-
-    # Если нажимал "Написать дату", но ввёл не дату
+    # Если ждали дату — но ввели не дату
     if context.user_data.get("awaiting_date"):
         await update.message.reply_text(
-            "Не понял дату 😅\n"
-            "Попробуй так: 23 февраля или 23.02 или 23.02.2026",
+            "Не понял дату 😅\nПопробуй: 23 февраля / 23.02 / 23.02.2026",
             reply_markup=MAIN_KB,
         )
         return
 
+    # Фразы на всякий случай
+    t = normalize_text(txt)
+    if "сегодня" in t:
+        return await show_today(update, context)
+    if "завтра" in t:
+        return await show_tomorrow(update, context)
+
     await update.message.reply_text(
-        "Я могу показать расписание по кнопкам.\n"
-        f"Нажми {BTN_TODAY}, {BTN_TOMORROW} или {BTN_DATE}.",
+        f"Нажми {BTN_TODAY}, {BTN_TOMORROW}, {BTN_DATE} или {BTN_WEEK}.",
         reply_markup=MAIN_KB,
     )
 
@@ -275,9 +298,13 @@ async def notify(context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
         return
 
 
-async def last_pair_watcher(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Раз в минуту проверяем уведомления (осталась 1 пара / началась последняя)."""
-    global _lastpair_notified_for, _oneleft_notified_for
+async def notifier(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Уведомления:
+    - 'осталась 1 пара' (когда начинается предпоследняя, или единственная если всего 1)
+    - 'началась последняя пара' (НО без дубля: если всего 1 пара — шлём только одно сообщение)
+    """
+    global _oneleft_notified_for, _lastpair_notified_for
 
     now = datetime.now(TZ)
     today = now.date()
@@ -287,10 +314,15 @@ async def last_pair_watcher(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     n = len(lessons)
 
-    # 1) "осталась 1 пара"
+    # Момент, когда "останется 1 пара"
+    target_idx = (n - 2) if n >= 2 else 0
+    target = lessons[target_idx]
+
+    # Момент старта последней пары
+    last = lessons[-1]
+
+    # 1) Осталась 1 пара
     if _oneleft_notified_for != today:
-        target_idx = (n - 2) if n >= 2 else 0
-        target = lessons[target_idx]
         if now.hour == target.start.hour and now.minute == target.start.minute:
             if n == 1:
                 await notify(
@@ -304,16 +336,16 @@ async def last_pair_watcher(context: ContextTypes.DEFAULT_TYPE) -> None:
                 )
             _oneleft_notified_for = today
 
-    # 2) "началась последняя пара" (если уже была 1-парашная — не дублим)
+    # 2) Началась последняя пара — без дубля (если всего 1 пара, то уже отправили выше)
     if _lastpair_notified_for != today:
-        last = lessons[-1]
         if now.hour == last.start.hour and now.minute == last.start.minute:
-            # если это тот же момент, что и "сегодня всего 1 пара" — не шлём второе
-            if not (n == 1 and _oneleft_notified_for == today):
-                await notify(
-                    context,
-                    f"🔔 Началась последняя пара ({last.start.strftime('%H:%M')}–{last.end.strftime('%H:%M')}): {last.title}"
-                )
+            if n == 1:
+                _lastpair_notified_for = today
+                return
+            await notify(
+                context,
+                f"🔔 Началась последняя пара ({last.start.strftime('%H:%M')}–{last.end.strftime('%H:%M')}): {last.title}"
+            )
             _lastpair_notified_for = today
 
 
@@ -329,8 +361,7 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 
     # Каждую минуту проверяем уведомления
-    # (важно: python-telegram-bot должен быть установлен с [job-queue])
-    app.job_queue.run_repeating(last_pair_watcher, interval=60, first=5)
+    app.job_queue.run_repeating(notifier, interval=60, first=5)
 
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
